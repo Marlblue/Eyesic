@@ -34,6 +34,8 @@ type PlayerContextValue = {
   muted: boolean;
   shuffle: boolean;
   repeat: RepeatMode;
+  keepAwake: boolean;
+  toggleKeepAwake: () => void;
   error: string | null;
   /** The queue sheet is opened from both the player card and the mobile nav. */
   isQueueOpen: boolean;
@@ -57,7 +59,13 @@ type PlayerContextValue = {
 const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 type Session = { queue: Track[]; order: number[]; cursor: number; position: number };
-type Prefs = { volume: number; muted: boolean; shuffle: boolean; repeat: RepeatMode };
+type Prefs = {
+  volume: number;
+  muted: boolean;
+  shuffle: boolean;
+  repeat: RepeatMode;
+  keepAwake: boolean;
+};
 
 const REPEAT_MODES: RepeatMode[] = ["off", "all", "one"];
 
@@ -82,7 +90,7 @@ const sessionStore = createPersistedStore<Session>(
 
 const prefsStore = createPersistedStore<Prefs>(
   "mscapp:prefs:v1",
-  { volume: 80, muted: false, shuffle: false, repeat: "off" },
+  { volume: 80, muted: false, shuffle: false, repeat: "off", keepAwake: false },
   (stored, fallback) => {
     const value = stored as Partial<Prefs> | null;
     if (!value) return fallback;
@@ -93,6 +101,10 @@ const prefsStore = createPersistedStore<Prefs>(
       repeat: REPEAT_MODES.includes(value.repeat as RepeatMode)
         ? (value.repeat as RepeatMode)
         : "off",
+      // Off by default: it only fights auto-lock-on-idle, not a deliberate
+      // lock, and forcing the screen to stay lit for that alone is a bad
+      // trade most people would not want without asking first.
+      keepAwake: Boolean(value.keepAwake),
     };
   },
 );
@@ -110,6 +122,7 @@ function shuffledOrder(length: number, first: number) {
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
+  const silenceRef = useRef<HTMLAudioElement | null>(null);
 
   const session = useSyncExternalStore(
     sessionStore.subscribe,
@@ -301,11 +314,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   /**
    * Keeps the screen from auto-locking on idle timeout while a track plays.
-   * Only fights the *automatic* lock: a deliberate power-button press still
-   * hides the page, releases the lock, and lets playback stop as usual.
+   * Opt-in and off by default: it only fights the *automatic* idle lock, not
+   * a deliberate power-button press (that still hides the page and lets
+   * playback stop as usual), so forcing the screen to stay lit for that alone
+   * is a trade-off worth leaving to the listener rather than assuming.
    */
   useEffect(() => {
-    if (!isPlaying || typeof navigator === "undefined" || !("wakeLock" in navigator)) return;
+    if (
+      !isPlaying ||
+      !prefs.keepAwake ||
+      typeof navigator === "undefined" ||
+      !("wakeLock" in navigator)
+    )
+      return;
     let sentinel: WakeLockSentinel | null = null;
     let cancelled = false;
 
@@ -334,6 +355,47 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener("visibilitychange", onVisible);
       sentinel?.release().catch(() => {});
     };
+  }, [isPlaying, prefs.keepAwake]);
+
+  /**
+   * Silent audio keep-alive: a same-origin <audio> element that loops a tiny
+   * silent MP3 while playback is active. This is the key to background audio:
+   * the browser treats a page with a playing <audio> as "actively producing
+   * media" and will not suspend or throttle it when the tab goes hidden, the
+   * screen locks, or the user switches apps. The YouTube IFrame embed then
+   * rides along in the same unsuspended page and keeps streaming.
+   *
+   * The volume is near-zero (not actually zero — some browsers treat muted or
+   * volume-0 audio as "not really playing" and suspend anyway).
+   */
+  useEffect(() => {
+    const audio = new Audio("/silence.mp3");
+    audio.loop = true;
+    audio.volume = 0.01;
+    // Needed on some mobile browsers to allow programmatic .play().
+    audio.setAttribute("playsinline", "true");
+    silenceRef.current = audio;
+
+    return () => {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load(); // Release resources.
+      silenceRef.current = null;
+    };
+  }, []);
+
+  // Sync silent audio state with playback: play when music plays, pause when
+  // it pauses. The .play() call can reject if the browser hasn't had a user
+  // gesture yet (cold start with a cued track) — that's fine, the keep-alive
+  // only matters once the user has interacted and started real playback.
+  useEffect(() => {
+    const silence = silenceRef.current;
+    if (!silence) return;
+    if (isPlaying) {
+      silence.play().catch(() => {});
+    } else {
+      silence.pause();
+    }
   }, [isPlaying]);
 
   /**
@@ -352,6 +414,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (document.hidden || !wantsPlayingRef.current) return;
       const player = playerRef.current;
       if (player && player.getPlayerState() !== PlayerState.PLAYING) player.playVideo();
+      // Re-kick the silence loop too, in case the browser paused it.
+      silenceRef.current?.play().catch(() => {});
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
@@ -385,6 +449,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
     navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
   }, [isPlaying]);
+
+  // Feed the lock-screen progress bar: without this the OS shows an
+  // indeterminate scrubber even though we know exactly where we are.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const dur = duration || current?.duration || 0;
+    if (dur <= 0) return;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration: dur,
+        playbackRate: 1,
+        position: Math.min(Math.max(position, 0), dur),
+      });
+    } catch {
+      // Some browsers throw if position > duration due to a race.
+    }
+  }, [position, duration, current]);
 
   // --- Actions. --------------------------------------------------------------
   const play = useCallback((tracks: Track[], startIndex = 0) => {
@@ -469,6 +550,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const toggleKeepAwake = useCallback(() => {
+    prefsStore.update((state) => ({ ...state, keepAwake: !state.keepAwake }));
+  }, []);
+
   const playAt = useCallback((queueIndex: number) => {
     const target = sessionStore.peek().order.indexOf(queueIndex);
     if (target < 0) return;
@@ -544,6 +629,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       muted: prefs.muted,
       shuffle: prefs.shuffle,
       repeat: prefs.repeat,
+      keepAwake: prefs.keepAwake,
+      toggleKeepAwake,
       error,
       isQueueOpen,
       openQueue,
@@ -584,6 +671,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       toggleMute,
       toggleShuffle,
       cycleRepeat,
+      toggleKeepAwake,
       playAt,
       removeFromQueue,
       enqueue,

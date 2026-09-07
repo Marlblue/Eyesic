@@ -12,6 +12,7 @@ import {
   ShuffleIcon,
   SkipBackIcon,
   SkipForwardIcon,
+  SunIcon,
   VolumeIcon,
 } from "@/components/icons";
 import { usePlayer } from "@/components/player/player-provider";
@@ -239,6 +240,20 @@ export function PlayerBar() {
                 className="hidden group-data-[open=true]/he:flex"
               >
                 <ExternalLinkIcon size={18} />
+              </ControlButton>
+
+              <ControlButton
+                label={
+                  player.keepAwake
+                    ? "Layar tetap nyala: aktif (nggak nge-lock sendiri karena idle)"
+                    : "Layar tetap nyala: nonaktif"
+                }
+                onClick={player.toggleKeepAwake}
+                active={player.keepAwake}
+                secondary
+                className="hidden group-data-[open=true]/he:flex"
+              >
+                <SunIcon size={18} />
               </ControlButton>
 
               <div className="ml-1 hidden items-center gap-1 group-data-[open=true]/he:flex">
