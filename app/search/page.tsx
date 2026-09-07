@@ -1,15 +1,18 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { PlayIcon, SearchIcon } from "@/components/icons";
 import { usePlayer } from "@/components/player/player-provider";
 import { TrackList } from "@/components/track-list";
 import { Wave } from "@/components/ui/wave";
 import { cacheTracks, createPlaylist } from "@/lib/library";
-import { importPlaylist, searchTracks } from "@/lib/search-client";
+import { fetchSuggestions, importPlaylist, searchTracks } from "@/lib/search-client";
 import type { Track } from "@/lib/types";
 
 type Mode = "search" | "import";
+
+/** Waits for a pause in typing before asking, so suggestions don't fire per keystroke. */
+const SUGGEST_DEBOUNCE_MS = 200;
 
 export default function SearchPage() {
   const player = usePlayer();
@@ -20,12 +23,14 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  function submit(event: React.FormEvent) {
-    event.preventDefault();
-    const value = query.trim();
-    if (!value || pending) return;
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const suggestTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const suggestAbort = useRef<AbortController | undefined>(undefined);
 
+  function run(value: string) {
     setError(null);
+    setSuggestionsOpen(false);
     startTransition(async () => {
       try {
         const tracks = mode === "search" ? await searchTracks(value) : await importPlaylist(value);
@@ -41,6 +46,51 @@ export default function SearchPage() {
       }
     });
   }
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const value = query.trim();
+    if (!value || pending) return;
+    run(value);
+  }
+
+  function onQueryChange(value: string) {
+    setQuery(value);
+    suggestAbort.current?.abort();
+    clearTimeout(suggestTimer.current);
+
+    if (mode !== "search" || value.trim().length === 0) {
+      setSuggestions([]);
+      setSuggestionsOpen(false);
+      return;
+    }
+
+    suggestTimer.current = setTimeout(() => {
+      const controller = new AbortController();
+      suggestAbort.current = controller;
+      fetchSuggestions(value, controller.signal)
+        .then((result) => {
+          setSuggestions(result);
+          setSuggestionsOpen(result.length > 0);
+        })
+        .catch(() => {
+          // Aborted (superseded by newer input) or the endpoint hiccuped — no big deal.
+        });
+    }, SUGGEST_DEBOUNCE_MS);
+  }
+
+  function pickSuggestion(value: string) {
+    setQuery(value);
+    setSuggestionsOpen(false);
+    run(value);
+  }
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(suggestTimer.current);
+      suggestAbort.current?.abort();
+    };
+  }, []);
 
   return (
     <div className="flex flex-col gap-6">
@@ -69,7 +119,10 @@ export default function SearchPage() {
           <input
             type="search"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => onQueryChange(event.target.value)}
+            onFocus={() => setSuggestionsOpen(suggestions.length > 0)}
+            onBlur={() => setSuggestionsOpen(false)}
+            autoComplete="off"
             enterKeyHint="search"
             placeholder={
               mode === "search"
@@ -79,6 +132,23 @@ export default function SearchPage() {
             aria-label={mode === "search" ? "Kata kunci pencarian" : "Link playlist"}
             className="w-full rounded-full border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-violet-500 focus:bg-white/10"
           />
+          {mode === "search" && suggestionsOpen ? (
+            <ul className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-10 overflow-hidden rounded-2xl border border-white/10 bg-zinc-900 shadow-xl">
+              {suggestions.map((suggestion) => (
+                <li key={suggestion}>
+                  <button
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => pickSuggestion(suggestion)}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-zinc-200 transition hover:bg-white/10"
+                  >
+                    <SearchIcon size={14} className="shrink-0 text-zinc-500" />
+                    <span className="truncate">{suggestion}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
         <button
           type="submit"

@@ -135,3 +135,25 @@ export function searchTracks(query: string) {
 export function importPlaylist(input: string) {
   return request(`/api/playlist?id=${encodeURIComponent(input)}`, null);
 }
+
+const suggestionMemory = new Map<string, string[]>();
+
+/**
+ * Search-as-you-type suggestions. Backed by an unmetered endpoint (see
+ * `/api/suggest`), so this skips the localStorage cache used for real
+ * searches — there is no quota to protect, just a plain in-memory cache to
+ * avoid re-asking for the same half-typed word.
+ */
+export async function fetchSuggestions(query: string, signal?: AbortSignal): Promise<string[]> {
+  const key = query.trim().toLowerCase();
+  if (!key) return [];
+
+  const cached = suggestionMemory.get(key);
+  if (cached) return cached;
+
+  const response = await fetch(`/api/suggest?q=${encodeURIComponent(key)}`, { signal });
+  const body = (await response.json().catch(() => null)) as { suggestions?: string[] } | null;
+  const suggestions = body?.suggestions ?? [];
+  suggestionMemory.set(key, suggestions);
+  return suggestions;
+}

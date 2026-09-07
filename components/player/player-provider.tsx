@@ -304,6 +304,30 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (current && isPlaying) pushRecent(current);
   }, [current, isPlaying]);
 
+  /**
+   * Media Session: tells the OS this is real, active media so mobile Chrome
+   * keeps the player alive (and shows lock-screen controls) instead of
+   * suspending it once the screen locks — without this, playback stops the
+   * moment the app is backgrounded.
+   */
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    if (!current) {
+      navigator.mediaSession.metadata = null;
+      return;
+    }
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: current.title,
+      artist: current.artist,
+      artwork: [{ src: current.thumbnail, sizes: "480x360", type: "image/jpeg" }],
+    });
+  }, [current]);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+  }, [isPlaying]);
+
   // --- Actions. --------------------------------------------------------------
   const play = useCallback((tracks: Track[], startIndex = 0) => {
     if (tracks.length === 0) return;
@@ -430,6 +454,24 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const dismissError = useCallback(() => setError(null), []);
   const openQueue = useCallback(() => setQueueOpen(true), []);
   const closeQueue = useCallback(() => setQueueOpen(false), []);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    navigator.mediaSession.setActionHandler("play", () => playerRef.current?.playVideo());
+    navigator.mediaSession.setActionHandler("pause", () => playerRef.current?.pauseVideo());
+    navigator.mediaSession.setActionHandler("previoustrack", previous);
+    navigator.mediaSession.setActionHandler("nexttrack", next);
+    navigator.mediaSession.setActionHandler("seekto", (details) => {
+      if (details.seekTime != null) seek(details.seekTime);
+    });
+    return () => {
+      navigator.mediaSession.setActionHandler("play", null);
+      navigator.mediaSession.setActionHandler("pause", null);
+      navigator.mediaSession.setActionHandler("previoustrack", null);
+      navigator.mediaSession.setActionHandler("nexttrack", null);
+      navigator.mediaSession.setActionHandler("seekto", null);
+    };
+  }, [previous, next, seek]);
 
   const value = useMemo<PlayerContextValue>(
     () => ({
