@@ -299,6 +299,64 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("pagehide", save);
   }, []);
 
+  /**
+   * Keeps the screen from auto-locking on idle timeout while a track plays.
+   * Only fights the *automatic* lock: a deliberate power-button press still
+   * hides the page, releases the lock, and lets playback stop as usual.
+   */
+  useEffect(() => {
+    if (!isPlaying || typeof navigator === "undefined" || !("wakeLock" in navigator)) return;
+    let sentinel: WakeLockSentinel | null = null;
+    let cancelled = false;
+
+    const acquire = () => {
+      navigator.wakeLock
+        .request("screen")
+        .then((lock) => {
+          if (cancelled) lock.release().catch(() => {});
+          else sentinel = lock;
+        })
+        .catch(() => {
+          // Denied or unsupported right now — not fatal, just no-op.
+        });
+    };
+    acquire();
+
+    // The lock is released by the browser whenever the page goes hidden, so
+    // it has to be re-requested by hand on the way back if still playing.
+    const onVisible = () => {
+      if (!document.hidden && !sentinel) acquire();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      sentinel?.release().catch(() => {});
+    };
+  }, [isPlaying]);
+
+  /**
+   * YouTube's own embed pauses itself when the tab goes hidden (screen lock,
+   * switching apps) — that is enforced on their end and out of our control.
+   * What we *can* do is pick the track back up the moment the app is visible
+   * again, so returning to it does not require hunting for the play button.
+   */
+  const wantsPlayingRef = useRef(false);
+  useEffect(() => {
+    wantsPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.hidden || !wantsPlayingRef.current) return;
+      const player = playerRef.current;
+      if (player && player.getPlayerState() !== PlayerState.PLAYING) player.playVideo();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
   // Remember what was played, for the home screen.
   useEffect(() => {
     if (current && isPlaying) pushRecent(current);

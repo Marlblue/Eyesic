@@ -17,6 +17,23 @@ export function extractPlaylistId(input: string): string | null {
   return null;
 }
 
+/**
+ * A link to YouTube's own player (app or full site) for the given videos, in
+ * order. Real background/lockscreen playback only works there — our own
+ * embedded player is a cross-origin guest and can't get it (see
+ * PlayerProvider's Media Session comment) — so this is the escape hatch: hand
+ * playback off to YouTube itself instead of faking something that can't work.
+ * A single id links straight to the video; more than one goes through
+ * `watch_videos`, YouTube's own multi-id endpoint, which redirects to an
+ * ad-hoc playlist so next/previous keep working after the handoff.
+ */
+export function youtubeWatchUrl(ids: string[]): string {
+  const trimmed = ids.filter(Boolean).slice(0, 50);
+  return trimmed.length > 1
+    ? `https://www.youtube.com/watch_videos?video_ids=${trimmed.join(",")}`
+    : `https://www.youtube.com/watch?v=${trimmed[0]}`;
+}
+
 export function extractVideoId(input: string): string | null {
   const value = input.trim();
   if (!value) return null;
