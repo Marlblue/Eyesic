@@ -39,10 +39,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full">
         <PlayerProvider>
-          {/*
-            `relative z-0` is load-bearing: it stacks the whole app above the
-            hidden YouTube iframe that PlayerProvider parks at `-z-10`.
-          */}
+          {/* `relative z-0` creates a stacking context for the app shell. */}
           <div className="relative z-0 flex min-h-dvh flex-col bg-zinc-950">
             <SiteNav />
             {/* Extra bottom padding on mobile: the player card and the bottom

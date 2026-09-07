@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  ExternalLinkIcon,
   HeartIcon,
   ListIcon,
   PauseIcon,
@@ -12,7 +11,6 @@ import {
   ShuffleIcon,
   SkipBackIcon,
   SkipForwardIcon,
-  SunIcon,
   VolumeIcon,
 } from "@/components/icons";
 import { usePlayer } from "@/components/player/player-provider";
@@ -21,7 +19,6 @@ import { Vinyl } from "@/components/vinyl";
 import { toggleLike, useLibrary } from "@/lib/library";
 import { useCanHover } from "@/lib/use-media-query";
 import { cn, formatTime } from "@/lib/utils";
-import { youtubeWatchUrl } from "@/lib/yt-url";
 
 /** Shared slider skin: a thin track with a bordered white thumb. */
 const SLIDER =
@@ -44,15 +41,6 @@ export function PlayerBar() {
   const { current, isPlaying, isBuffering, duration, error } = player;
   const liked = current ? library.liked.includes(current.id) : false;
   const position = scrubbing ?? player.position;
-
-  // Real background/lockscreen playback only survives inside YouTube's own
-  // app or site — our embedded player can't get it (see PlayerProvider). This
-  // hands off the current track, plus whatever is queued after it, there.
-  function openInYouTube() {
-    if (!current) return;
-    const ids = [current.id, ...player.queue.slice(player.currentIndex + 1).map((t) => t.id)];
-    window.open(youtubeWatchUrl(ids), "_blank", "noopener,noreferrer");
-  }
 
   // Space toggles playback, arrows seek — unless the user is typing.
   useEffect(() => {
@@ -174,7 +162,7 @@ export function PlayerBar() {
               </span>
             </div>
 
-            <div className="flex grow flex-row items-center justify-center gap-2 px-4 pb-3 sm:gap-4">
+            <div className="flex grow flex-row items-center justify-center gap-3 px-4 pb-3 sm:gap-5">
               <ControlButton
                 label={
                   player.repeat === "one"
@@ -231,29 +219,6 @@ export function PlayerBar() {
                 className="hidden group-data-[open=true]/he:flex"
               >
                 <ListIcon size={20} />
-              </ControlButton>
-
-              <ControlButton
-                label="Buka di YouTube (tetap jalan walau app ditutup/dikunci)"
-                onClick={openInYouTube}
-                secondary
-                className="hidden group-data-[open=true]/he:flex"
-              >
-                <ExternalLinkIcon size={18} />
-              </ControlButton>
-
-              <ControlButton
-                label={
-                  player.keepAwake
-                    ? "Layar tetap nyala: aktif (nggak nge-lock sendiri karena idle)"
-                    : "Layar tetap nyala: nonaktif"
-                }
-                onClick={player.toggleKeepAwake}
-                active={player.keepAwake}
-                secondary
-                className="hidden group-data-[open=true]/he:flex"
-              >
-                <SunIcon size={18} />
               </ControlButton>
 
               <div className="ml-1 hidden items-center gap-1 group-data-[open=true]/he:flex">
