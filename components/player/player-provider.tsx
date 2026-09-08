@@ -10,7 +10,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { fetchAudioUrl, invalidateAudioUrl } from "@/lib/audio-stream";
+import { audioUrl } from "@/lib/audio-stream";
 import { pushRecent } from "@/lib/library";
 import { createPersistedStore } from "@/lib/persisted-store";
 import type { RepeatMode, Track } from "@/lib/types";
@@ -222,11 +222,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       if (retryCountRef.current < 1 && trackId) {
         retryCountRef.current++;
-        invalidateAudioUrl(trackId);
-        // Re-trigger the load effect by bumping loadIdRef — the effect watches
-        // currentId which hasn't changed, so we force it via a state update.
+        // Retry the same-origin stream once and resume from the last playhead.
         const savedTime = audio.currentTime || 0;
-        loadAudioForTrack(trackId, true, savedTime);
+        audio.src = `${audioUrl(trackId)}?retry=${Date.now()}`;
+        audio.load();
+        const resume = () => {
+          audio.removeEventListener("canplay", resume);
+          if (savedTime > 0) audio.currentTime = savedTime;
+          audio.play().catch(() => {});
+        };
+        audio.addEventListener("canplay", resume);
         return;
       }
 
@@ -278,9 +283,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       setIsBuffering(true);
 
       try {
-        const { url } = await fetchAudioUrl(videoId);
+        const url = audioUrl(videoId);
 
-        // A newer load started while we were fetching — discard this one.
+        // A newer load started while we were preparing this track; discard it.
         if (loadIdRef.current !== thisLoad) return;
 
         audio.src = url;
