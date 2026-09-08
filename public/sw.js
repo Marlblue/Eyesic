@@ -3,7 +3,7 @@
  *
  * Scope is deliberately narrow: cache the shell so the PWA opens instantly and
  * shows the library offline. Audio is never cached because playback runs
- * through the audio resolver and must always stay on the network.
+ * through the YouTube IFrame player, which streams from YouTube directly.
  */
 const CACHE = "mscapp-shell-v1";
 const SHELL = ["/", "/search", "/library", "/manifest.webmanifest"];
@@ -33,7 +33,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return; // YouTube, fonts, thumbnails.
-  if (url.pathname.startsWith("/api/")) return; // APIs and byte-range audio stay on the network.
+  if (url.pathname.startsWith("/api/")) return; // Always hit the network for search.
 
   // Navigations: network first, fall back to the cached shell when offline.
   if (request.mode === "navigate") {

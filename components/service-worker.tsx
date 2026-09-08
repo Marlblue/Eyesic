@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 /**
  * Registers the app-shell service worker. Only the UI is cached: audio comes
- * from the network through the audio proxy, which is not stored offline.
+ * from the YouTube player, which cannot be stored offline.
  */
 export function ServiceWorker() {
   useEffect(() => {
