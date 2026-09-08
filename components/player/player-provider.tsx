@@ -145,6 +145,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const loadIdRef = useRef(0);
   /** How many consecutive load errors for the same track (prevents infinite retry). */
   const retryCountRef = useRef(0);
+  /** Source started synchronously by a user gesture; the load effect must not replace it. */
+  const gestureStartedIdRef = useRef<string | null>(null);
 
   const advance = useCallback((delta: number, auto: boolean) => {
     const { order: ord, cursor: cur } = sessionStore.peek();
@@ -319,6 +321,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     retryCountRef.current = 0;
 
+    if (gestureStartedIdRef.current === currentId) {
+      gestureStartedIdRef.current = null;
+      return;
+    }
+
     if (autoplayRef.current) {
       loadAudioForTrack(currentId, true);
     } else {
@@ -397,6 +404,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, [position, duration, current]);
 
   // --- Actions. --------------------------------------------------------------
+  const startFromGesture = useCallback((videoId: string) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    gestureStartedIdRef.current = videoId;
+    setIsBuffering(true);
+    audio.src = audioUrl(videoId);
+    audio.load();
+    audio.play().catch((playError: unknown) => {
+      setIsBuffering(false);
+      setError(
+        playError instanceof Error
+          ? `Gagal memulai audio: ${playError.message}`
+          : "Gagal memulai audio",
+      );
+    });
+  }, []);
+
   const play = useCallback((tracks: Track[], startIndex = 0) => {
     if (tracks.length === 0) return;
     const start = Math.min(Math.max(startIndex, 0), tracks.length - 1);
@@ -405,13 +429,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     autoplayRef.current = true;
     setError(null);
     setTick(0);
+    startFromGesture(tracks[start].id);
     sessionStore.set({
       queue: tracks,
       order: shuffle ? shuffledOrder(tracks.length, start) : tracks.map((_, i) => i),
       cursor: shuffle ? 0 : start,
       position: 0,
     });
-  }, []);
+  }, [startFromGesture]);
 
   const toggle = useCallback(() => {
     const audio = audioRef.current;
@@ -486,13 +511,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const playAt = useCallback((queueIndex: number) => {
-    const target = sessionStore.peek().order.indexOf(queueIndex);
+    const snapshot = sessionStore.peek();
+    const target = snapshot.order.indexOf(queueIndex);
     if (target < 0) return;
+    const track = snapshot.queue[queueIndex];
+    if (!track) return;
     autoplayRef.current = true;
     setError(null);
     setTick(0);
+    startFromGesture(track.id);
     sessionStore.update((state) => ({ ...state, cursor: target, position: 0 }));
-  }, []);
+  }, [startFromGesture]);
 
   const enqueue = useCallback((tracks: Track[]) => {
     if (tracks.length === 0) return;
