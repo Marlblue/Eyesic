@@ -59,14 +59,21 @@ async function resolveFromPiped(id: string): Promise<AudioSource | null> {
 
 async function resolveFromYoutube(id: string): Promise<AudioSource> {
   const client = await getYoutubeClient();
-  const format = await client.getStreamingData(id, {
-    type: "audio",
-    quality: "best",
-    format: "mp4",
-  });
-  const url = await format.decipher(client.session.player);
+  // The iOS client returns direct, unciphered AAC URLs. The generic web client
+  // often returns signature-ciphered formats, which can temporarily break when
+  // YouTube changes its player JavaScript.
+  const info = await client.getBasicInfo(id, { client: "IOS" });
+  const format = (info.streaming_data?.adaptive_formats ?? [])
+    .filter((candidate) => candidate.has_audio && !candidate.has_video && candidate.url)
+    .sort((a, b) => {
+      const aMp4 = a.mime_type.startsWith("audio/mp4") ? 1 : 0;
+      const bMp4 = b.mime_type.startsWith("audio/mp4") ? 1 : 0;
+      return bMp4 - aMp4 || b.bitrate - a.bitrate;
+    })[0];
+
+  if (!format?.url) throw new Error("YouTube did not return a playable audio format");
   return {
-    url,
+    url: format.url,
     mimeType: format.mime_type?.split(";")[0] || "audio/mp4",
     expiresAt: Date.now() + 4 * 60 * 60 * 1000,
   };
@@ -75,7 +82,14 @@ async function resolveFromYoutube(id: string): Promise<AudioSource> {
 async function resolveSource(id: string, refresh = false) {
   const cached = sourceCache.get(id);
   if (!refresh && cached && cached.expiresAt > Date.now()) return cached;
-  const source = (await resolveFromPiped(id)) ?? (await resolveFromYoutube(id));
+  let source: AudioSource;
+  try {
+    source = await resolveFromYoutube(id);
+  } catch {
+    const piped = await resolveFromPiped(id);
+    if (!piped) throw new Error("No audio source is currently available");
+    source = piped;
+  }
   sourceCache.set(id, source);
   return source;
 }
