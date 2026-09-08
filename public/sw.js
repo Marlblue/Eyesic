@@ -3,7 +3,7 @@
  *
  * Scope is deliberately narrow: cache the shell so the PWA opens instantly and
  * shows the library offline. Audio is never cached because playback runs
- * through the same-origin API proxy and must always stay on the network.
+ * through the audio resolver and must always stay on the network.
  */
 const CACHE = "mscapp-shell-v1";
 const SHELL = ["/", "/search", "/library", "/manifest.webmanifest"];

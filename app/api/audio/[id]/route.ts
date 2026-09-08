@@ -94,43 +94,25 @@ async function resolveSource(id: string, refresh = false) {
   return source;
 }
 
-function fetchAudio(source: AudioSource, range: string | null) {
-  return fetch(source.url, {
-    headers: { ...(range ? { Range: range } : {}), "User-Agent": "Mozilla/5.0" },
-    redirect: "follow",
-    cache: "no-store",
-    signal: AbortSignal.timeout(20_000),
-  });
-}
-
 export async function GET(request: Request, { params }: RouteContext<"/api/audio/[id]">) {
   const { id } = await params;
   if (!/^[\w-]{11}$/.test(id)) {
     return Response.json({ error: "Video ID tidak valid" }, { status: 400 });
   }
 
-  const range = request.headers.get("range");
   try {
-    let source = await resolveSource(id);
-    let upstream = await fetchAudio(source, range);
-
-    if (upstream.status === 401 || upstream.status === 403 || upstream.status === 404) {
-      sourceCache.delete(id);
-      source = await resolveSource(id, true);
-      upstream = await fetchAudio(source, range);
-    }
-    if (!upstream.ok || !upstream.body) throw new Error(`upstream HTTP ${upstream.status}`);
-
-    const headers = new Headers({
-      "Content-Type": upstream.headers.get("content-type") || source.mimeType,
-      "Accept-Ranges": "bytes",
-      "Cache-Control": "private, no-store",
+    const retrying = new URL(request.url).searchParams.has("retry");
+    const source = await resolveSource(id, retrying);
+    // Let the media CDN carry the long-lived audio transfer. Keeping the body
+    // inside a serverless route risks truncation when the function times out.
+    return new Response(null, {
+      status: 307,
+      headers: {
+        Location: source.url,
+        "Content-Type": source.mimeType,
+        "Cache-Control": "private, no-store",
+      },
     });
-    for (const name of ["content-length", "content-range"]) {
-      const value = upstream.headers.get(name);
-      if (value) headers.set(name, value);
-    }
-    return new Response(upstream.body, { status: upstream.status, headers });
   } catch (error) {
     console.error(`Audio stream failed for ${id}:`, error);
     return Response.json(
